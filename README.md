@@ -42,6 +42,13 @@ python main.py MSFT -s 2023-01-01 -e 2023-12- closing price of the stock on that
 - `-e, --end`: End date in YYYY-MM-DD format  
 - `-i, --interval`: Data interval (1m, 5m, 1h, 1d, 1wk, 1mo, etc.)
 - `-m, --market`: Show available tickers for a market (crypto, stocks, forex, indices, commodities)
+ - `-o, --out-dir`: Output directory to save CSV files. If not provided, CSVs are saved to the parent directory of the project.
+
+You can use `-o` to write output files to a custom folder (it will be created if it doesn't exist):
+
+```bash
+python main.py AAPL MSFT -o ./data/output
+```
 
 ### Supported Intervals
 

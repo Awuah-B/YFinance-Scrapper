@@ -1,0 +1,12 @@
+# Ignore local cache files and generated CSV/pickle artifacts
+cache/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+venv/
+
+# macOS
+.DS_Store

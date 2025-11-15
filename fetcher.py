@@ -1,29 +1,12 @@
 #! /usr/bin/env python
 # fetcher.py: Script to scrape historical data from Yahoo Finance
 
-"""
-Yahoo Finance Data Fetcher
-
-This module provides functionality to fetch historical financial data from Yahoo Finance
-with built-in rate limiting, retry logic, and caching capabilities.
-
-Features:
-- Rate limiting to avoid API throttling
-- Exponential backoff retry logic
-- Local caching to reduce API calls
-- Support for different time intervals and date ranges
-- Comprehensive error handling and logging
-"""
-
-
 import time
-from typing import Optional, Dict, Any, List
-from pathlib import Path
-import pickle
-
+import threading
+from typing import Optional, Dict, Any
+from datetime import datetime
 import pandas as pd
 import yfinance as yf
-
 from set_logs import setup_logger
 from cache import Caches
 
@@ -31,126 +14,83 @@ logger = setup_logger(__name__)
 
 class YfData:
     """
-    Handles Yahoo Finance data fetching with rate limiting and caching.
-    
-    This class provides methods to fetch historical financial data from Yahoo Finance
-    with built-in rate limiting, retry logic, and caching to ensure reliable data retrieval.
-    
-    Attributes:
-        max_retries (int): Maximum number of retry attempts for failed requests
-        base_delay (float): Base delay in seconds between retry attempts
-        cached_data (Caches): Cache handler for storing and retrieving data
+    A thread-safe data fetcher for Yahoo Finance with caching and retry logic.
     """
-    
-    def __init__(self, max_retries: int = 5, base_delay: float = 3.0):
-        """
-        Initialize the YfData fetcher.
-        
-        Args:
-            max_retries (int): Maximum number of retry attempts (default: 5)
-            base_delay (float): Base delay in seconds between retries (default: 3.0)
-        """
+    def __init__(self, max_retries: int = 3, base_delay: float = 2.0):
         self.max_retries = max_retries
         self.base_delay = base_delay
-        self.cached_data = Caches()
-    
-    def get_yf_for_timeframe(
+        self.cache = Caches()
+        self._lock = threading.Lock()
+
+    def _flatten_multiindex_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Flatten MultiIndex columns to a single level."""
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
+        return df
+
+    def get_data(
         self,
         ticker: str,
-        interval: str,
-        period: str = 'max',
+        **kwargs: Any
     ) -> Optional[pd.DataFrame]:
         """
-        Fetch historical data for a ticker with specified interval and period.
-        
-        Args:
-            ticker (str): Stock/crypto ticker symbol (e.g., 'AAPL', 'BTC-USD')
-            interval (str): Data interval ('1m', '5m', '1h', '1d', '1wk', '1mo', etc.)
-            period (str): Time period ('1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max')
-            
-        Returns:
-            Optional[pd.DataFrame]: Historical data as DataFrame or None if failed
-            
-        Raises:
-            ValueError: If DataFrame is empty after all retries
-        """
-        cached_df = self.cached_data._load_from_cache(ticker, interval)
-        if cached_df is not None:
-            return cached_df
+        Fetch historical data for a ticker with specified parameters.
 
+        Args:
+            ticker (str): The stock ticker symbol.
+            **kwargs: Arbitrary keyword arguments passed to yfinance.download().
+                      Examples: start, end, period, interval.
+
+        Returns:
+            A DataFrame with historical data, or None if fetching fails.
+        """
+        # Generate a cache key based on the request parameters
+        cache_key = self.cache._get_cache_key(ticker, kwargs)
+
+        # Thread-safe cache check
+        with self._lock:
+            cached_df = self.cache.load_from_cache(cache_key)
+            if cached_df is not None:
+                return cached_df.copy(deep=True)
+
+        # If not in cache, fetch from yfinance
         for attempt in range(self.max_retries):
             try:
-                time.sleep(self.base_delay * (2 ** attempt))
+                time.sleep(self.base_delay * (2 ** attempt))  # Exponential backoff
+                logger.debug(f"Fetching data for {ticker} (attempt {attempt + 1}) with params: {kwargs}")
+
                 df = yf.download(
                     ticker,
-                    period=period,
-                    interval=interval,
+                    **kwargs,
                     auto_adjust=True,
-                    prepost=False
+                    prepost=False,
+                    progress=False
                 )
 
                 if not df.empty:
-                    self.cached_data._save_to_cache(df, ticker, interval)
-                    return df
-                elif attempt == self.max_retries - 1:
-                    raise ValueError("Empty DataFrame after retries")
-            except Exception as e:
-                logger.error(f"{interval} data attempt {attempt+1} failed: {str(e)}")
-                if attempt == self.max_retries - 1:
-                    return None
-    
-    def get_data_for_range(
-            self,
-            ticker: str,
-            start: str,
-            end: str,
-    ) -> Optional[pd.DataFrame]:
-        """
-        Fetch historical data for a ticker within a specific date range.
-        
-        Args:
-            ticker (str): Stock/crypto ticker symbol (e.g., 'AAPL', 'BTC-USD')
-            start (str): Start date in YYYY-MM-DD format
-            end (str): End date in YYYY-MM-DD format
-            
-        Returns:
-            Optional[pd.DataFrame]: Historical data as DataFrame or None if failed
-            
-        Raises:
-            ValueError: If DataFrame is empty after all retries
-        """
-        cache_path = self.cached_data._get_cache_path(ticker, start, end)
-        cached_df = self.cached_data._load_from_cache_range(cache_path)
-        if cached_df is not None:
-            return cached_df
+                    # yfinance can return a single-ticker DF or a multi-ticker DF
+                    # If it's multi-ticker, it will have a MultiIndex
+                    if isinstance(df.columns, pd.MultiIndex):
+                        # Extract the data for our specific ticker
+                        df = df.xs(ticker, level=1, axis=1)
 
-        for attempt in range(self.max_retries):
-            try:
-                time.sleep(self.base_delay * (2 ** attempt))
-                df = yf.download(
-                    ticker,
-                    start=start,
-                    end=end,
-                    interval='1d',
-                    auto_adjust=True,
-                    prepost=False
-                )
-                
-                if not df.empty:
-                    self.cached_data._save_to_cache_range(df, cache_path, ticker, start)
-                    return df
+                    df_clean = self._flatten_multiindex_columns(df)
+
+                    # Thread-safe cache save
+                    with self._lock:
+                        self.cache.save_to_cache(df_clean, cache_key)
+                    
+                    logger.debug(f"Successfully fetched {len(df_clean)} rows for {ticker}")
+                    return df_clean
+
                 elif attempt == self.max_retries - 1:
-                    raise ValueError("Empty DataFrame after retries")
-            
-            except Exception as e:
-                logger.error(f"Data range attempt {attempt+1} failed: {str(e)}")
-                if attempt == self.max_retries - 1:
+                    logger.warning(f"Empty DataFrame for {ticker} after {self.max_retries} attempts")
                     return None
 
-
-
-
-    
-
+            except Exception as e:
+                logger.error(f"Failed to fetch data for {ticker} on attempt {attempt + 1}: {e}")
+                if attempt == self.max_retries - 1:
+                    return None
+        return None
 
 

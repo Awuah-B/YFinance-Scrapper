@@ -7,7 +7,7 @@ crypto_tickers = [
 ]
 
 indices_tickers = [
-    "^DJI", "^GSPC", "^IXIC", "^VIX", "^HSI", "^N225"
+    "^DJI", "^GSPC", "^IXIC", "^VIX", "^HSI", "^N225", "DX-Y.NYB"
 ]
 
 forex_tickers = [
@@ -24,4 +24,12 @@ stocks_tickers = [
 
 commodities_tickers = [
     "GC=F", "SI=F", "ZN=F", "ZS=F"
+]
+
+eft_tickers = [
+    "SPY", "IVV", "VOO", "QQQ", "DIA", "VTI", "EEM", "GLD", "SLV", "USO", "IAU"
+]
+
+bond_interests_tickers = [
+    "FVX", "TNX", "TYX"
 ]

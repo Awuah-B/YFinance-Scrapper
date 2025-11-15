@@ -146,3 +146,47 @@ class Caches:
         except (pickle.PickleError, OSError) as e:
             self.logger.warning(f"Cache save failed for {cache_path}: {e}")
             return False
+
+    # Compatibility helpers expected by tests and other modules
+    def _get_cache_key(self, ticker: str, params: dict) -> str:
+        """Generate a deterministic cache key string from ticker and params dict.
+
+        Example: ticker=AAPL_interval=1d_start=2023-01-01
+        """
+        parts = [f"ticker={ticker}"]
+        for k, v in sorted(params.items()):
+            parts.append(f"{k}={v}")
+        return "_".join(parts)
+
+    def load_from_cache(self, key: str) -> Optional[pd.DataFrame]:
+        """Load a cached DataFrame using a simple key (key -> {key}.pkl).
+
+        This provides a thin compatibility layer for callers that expect
+        load_from_cache/save_to_cache with a single key string.
+        """
+        cache_path = self.cache_dir / f"{key}.pkl"
+        if not cache_path.exists():
+            return None
+        try:
+            with open(cache_path, 'rb') as f:
+                data = pickle.load(f)
+                if isinstance(data, pd.DataFrame) and not data.empty:
+                    self.logger.debug(f"Loaded cached data from {cache_path}")
+                    return data
+        except (pickle.PickleError, EOFError, AttributeError) as e:
+            self.logger.warning(f"Cache load failed for {cache_path}: {e}")
+        return None
+
+    def save_to_cache(self, df: pd.DataFrame, key: str) -> bool:
+        """Save a DataFrame to cache using a simple key (key -> {key}.pkl)."""
+        if df is None or (hasattr(df, 'empty') and df.empty):
+            return False
+        cache_path = self.cache_dir / f"{key}.pkl"
+        try:
+            with open(cache_path, 'wb') as f:
+                pickle.dump(df, f, protocol=pickle.HIGHEST_PROTOCOL)
+            self.logger.debug(f"Saved data to cache: {cache_path}")
+            return True
+        except (pickle.PickleError, OSError) as e:
+            self.logger.warning(f"Cache save failed for {cache_path}: {e}")
+            return False
