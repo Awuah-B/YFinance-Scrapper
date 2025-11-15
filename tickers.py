@@ -26,8 +26,8 @@ commodities_tickers = [
     "GC=F", "SI=F", "ZN=F", "ZS=F"
 ]
 
-eft_tickers = [
-    "SPY", "IVV", "VOO", "QQQ", "DIA", "VTI", "EEM", "GLD", "SLV", "USO", "IAU"
+etfs_tickers = [
+    "SPY", "IVV", "VOO", "QQQ", "DIA", "VTI", "EEM", "GLD", "SLV", "USO", "IAU", "GLDM", "SGOL", "AAAU", "OUNZ", "GDX", "GDXJ", "RING"
 ]
 
 bond_interests_tickers = [

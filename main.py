@@ -18,16 +18,17 @@ Examples:
   %(prog)s -m stocks               # Show available stock tickers
 
 Supported intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo
-Supported markets: crypto, stocks, forex, indices, commodities
+Supported markets: crypto, stocks, forex, indices, commodities, etf, bonds & interest
         """
     )
-    parser.add_argument("tickers", nargs='+', help="One or more ticker symbols on Yahoo Finance (e.g., AAPL BTC-USD)")
+    parser.add_argument("tickers", nargs='*', help="One or more ticker symbols on Yahoo Finance (e.g., AAPL BTC-USD)")
     parser.add_argument("-s", "--start", default=None, help="Historical start date (YYYY-MM-DD format)")
     parser.add_argument("-e", "--end", default=None, help="Historical end date (YYYY-MM-DD format)")
     parser.add_argument("-i", "--interval", default='1d', help="Historical data frequency (default: 1d)")
     parser.add_argument("-t", "--threads", type=int, default=1, help="Number of concurrent threads to use when fetching multiple tickers (default: 1)")
     parser.add_argument("-o", "--out-dir", default=None, help="Output directory for CSV files (default: parent directory)")
-    parser.add_argument("-m", "--market", choices=['crypto', 'stocks', 'forex', 'indices', 'commodities'], 
+    parser.add_argument("--markets", action="store_true", help="List all supported markets (reads available *_tickers in tickers.py)")
+    parser.add_argument("-m", "--market", choices=['crypto', 'stocks', 'forex', 'indices', 'commodities', 'etfs', 'bond_interests'], 
                        help="Show available tickers for a financial asset class")
     return parser.parse_args()
 
@@ -47,36 +48,63 @@ def main():
     logger = setup_logger(__name__, level='DEBUG')
 
     try:
-        # Handle market listing
-        if args.market:
-            market_tickers = getattr(tickers, f"{args.market}_tickers", [])
+        # If user asked for a list of markets, discover them from tickers module
+        if getattr(args, 'markets', False):
+            available = []
+            for name in dir(tickers):
+                if name.endswith('_tickers'):
+                    available.append(name[:-8])
+            available = sorted(set(available))
+            print("Available markets:")
+            for m in available:
+                print(f"  {m}")
+            return 0
+
+        # Handle market listing early (do not rely on tickers positional arg)
+        if getattr(args, 'market', None):
+            market_name = args.market
+            # Try a few possible attribute names on the tickers module
+            candidates = [
+                f"{market_name}_tickers",
+                market_name,
+                market_name + "s",
+                market_name.rstrip("s")
+            ]
+            market_tickers = None
+            found_attr = None
+            for attr in candidates:
+                market_tickers = getattr(tickers, attr, None)
+                if market_tickers:
+                    found_attr = attr
+                    break
+
             if market_tickers:
-                print(f"Available {args.market} tickers:")
-                for ticker in market_tickers:
-                    print(f"  {ticker}")
+                print(f"Available {market_name} tickers (from tickers.{found_attr}):")
+                for t in market_tickers:
+                    print(f"  {t}")
             else:
-                print(f"No tickers found for market: {args.market}")
-            return
-        
+                print(f"No tickers found for market: {market_name} (checked: {', '.join(candidates)})")
+            return 0
+
         # Validate ticker(s) are provided when not showing markets
         if not getattr(args, 'tickers', None):
             logger.error("Ticker symbol(s) are required. Use -m to show available markets or provide ticker symbol(s).")
             return 1
-        
+
         # Validate date formats if provided
         if args.start and not validate_date_format(args.start):
             logger.error(f"Invalid start date format: {args.start}. Use YYYY-MM-DD format.")
             return 1
-        
+
         if args.end and not validate_date_format(args.end):
             logger.error(f"Invalid end date format: {args.end}. Use YYYY-MM-DD format.")
             return 1
-        
+
         # Validate interval
         if not validate_interval(args.interval):
             logger.error(f"Invalid interval: {args.interval}. Supported intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo")
             return 1
-        
+
         # Initialize data fetcher
         fetcher = YfData()
 
@@ -86,12 +114,11 @@ def main():
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         # Prepare kwargs common to all ticker fetches
-        if args.start and args.end:
-            fetch_kwargs = {'start': args.start, 'end': args.end}
-        elif args.start:
-            fetch_kwargs = {'start': args.start}
-        else:
-            fetch_kwargs = {'interval': args.interval}
+        fetch_kwargs = {'interval': args.interval}
+        if args.start:
+            fetch_kwargs['start'] = args.start
+        if args.end:
+            fetch_kwargs['end'] = args.end
 
         any_success = False
 
@@ -147,7 +174,7 @@ def main():
 
         if not any_success:
             return 1
-            
+
     except KeyboardInterrupt:
         logger.info("Operation cancelled by user")
         return 1
